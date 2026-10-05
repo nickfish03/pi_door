@@ -340,6 +340,7 @@ class CoopController:
             return {
                 "time": now.strftime("%Y-%m-%d %H:%M:%S"),
                 "clockSynced": self.clock.is_synced(),
+                "timeSource": self.clock.time_source(),
                 "doorState": self.door.state,
                 "lastAction": s["lastAction"],
                 "lastActionAt": s["lastActionAt"],

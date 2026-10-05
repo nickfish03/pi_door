@@ -53,6 +53,47 @@ fi
 # Make sure NTP is on - the scheduler waits for a synced clock.
 timedatectl set-ntp true || true
 
+# --- 2a. time servers: the router first ------------------------------------
+# So the Pi can set its clock during an internet outage, as long as the
+# router is up. Order comes from NTP_SERVERS in coopdoor/config.py;
+# "gateway" = this Pi's default router, looked up now.
+GW=$(cd "$REPO" && python3 -c 'from coopdoor.ntpcheck import default_gateway as g; print(g() or "")')
+NTP_LIST=$(cd "$REPO" && python3 -c 'from coopdoor import config; print(" ".join(config.NTP_SERVERS))')
+servers=""
+for s in $NTP_LIST; do
+    if [ "$s" = "gateway" ]; then
+        if [ -n "$GW" ]; then
+            servers="$servers $GW"
+        else
+            echo "!!  Couldn't find the router's address (no default route) - leaving it out"
+        fi
+    else
+        servers="$servers $s"
+    fi
+done
+servers="${servers# }"
+mkdir -p /etc/systemd/timesyncd.conf.d
+{
+    echo "# Written by pi_door install.sh from NTP_SERVERS in coopdoor/config.py."
+    echo "# Edit that list and re-run install.sh rather than editing this file."
+    echo "[Time]"
+    echo "NTP=$servers"
+} > /etc/systemd/timesyncd.conf.d/coopdoor.conf
+echo "==> Time servers, in order: $servers"
+if systemctl is-enabled --quiet systemd-timesyncd 2>/dev/null; then
+    systemctl restart systemd-timesyncd
+else
+    echo "!!  systemd-timesyncd isn't the time service on this Pi (is the 'ntp' or"
+    echo "    'chrony' package installed?), so the list above won't be used."
+    echo "    'sudo apt remove ntp chrony' hands time back to systemd-timesyncd."
+fi
+if [ -n "$GW" ]; then
+    echo "==> Checking that the router ($GW) answers time requests:"
+    if ! (cd "$REPO" && python3 -m coopdoor.ntpcheck "$GW") | sed 's/^/    /'; then
+        echo "    (Until that's fixed the Pi uses the internet servers - see README 'Time from the router'.)"
+    fi
+fi
+
 # --- 2b. IP address: should come from DHCP ---------------------------------
 # The controller doesn't care what IP the Pi has; give it a fixed address
 # with a DHCP reservation on the router. A static address set on the Pi

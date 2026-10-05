@@ -58,6 +58,25 @@ LOCATION_LON = -89.4126
 TIMEZONE = "America/Chicago"
 
 # ---------------------------------------------------------------------------
+# Time servers (NTP)
+# ---------------------------------------------------------------------------
+# Where the Pi gets its time, in order of preference. install.sh writes these
+# into systemd-timesyncd's config; the Pi uses the first one that answers
+# with a synced clock and moves down the list if it can't.
+#
+# "gateway" means the Pi's default router (the EdgeRouter's address on the
+# coop's network), looked up when install.sh runs - re-run install.sh if
+# the router's address ever changes. Asking the router first means the Pi
+# can still set its clock during an INTERNET outage, as long as the router
+# itself kept running (see README "Clock sync" for the limits of that).
+# The internet pool servers are the backup for when the router doesn't
+# answer.
+#
+# To use a fixed address instead (e.g. the Synology, which has a battery
+# clock), replace "gateway" with its IP.
+NTP_SERVERS = ["gateway", "0.debian.pool.ntp.org", "1.debian.pool.ntp.org"]
+
+# ---------------------------------------------------------------------------
 # Durations - sanity limits for what /save accepts
 # ---------------------------------------------------------------------------
 MIN_DURATION_MS = 50

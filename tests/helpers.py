@@ -21,6 +21,9 @@ class FakeClock:
     def is_synced(self):
         return self.synced
 
+    def time_source(self):
+        return "192.168.20.1"
+
 
 class Now:
     """Settable stand-in for datetime.now."""

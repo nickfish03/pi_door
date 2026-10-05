@@ -31,7 +31,8 @@ Open `http://<pi's IP>/` in a browser on the same network (or
 [Troubleshooting](#troubleshooting)).
 
 **Status (top of page)**
-- Pi time: the Pi's current local time.
+- Pi time: the Pi's current local time, and which server it's getting
+  its time from (normally your router's address).
 - A warning line appears under it if the Pi's clock hasn't synced from
   the internet since boot. While it shows, the scheduler is paused; the
   manual buttons still work. See [Clock sync](#clock-sync).
@@ -144,9 +145,10 @@ cat /var/lib/coopdoor/settings.json     # saved settings, human-readable
   IP (`hostname -I` on the Pi). The Pi gets its address by DHCP, so a
   DHCP reservation on the router keeps it fixed.
 - **"Clock not synced" warning won't go away.** The Pi has no battery
-  clock and needs to reach an NTP server once after each boot. Check
-  `timedatectl` on the Pi (it should say `System clock synchronized:
-  yes`) and whether the coop VLAN can reach the internet on UDP 123.
+  clock and needs a time server once after each boot. Run
+  `python3 -m coopdoor.ntpcheck` from `~/git/pi_door` to see whether the
+  router answers, and `timedatectl timesync-status` to see what the
+  Pi's time service is doing. See [Time from the router](#time-from-the-router).
 - **Open and Close are backwards.** Swap `RELAY_OPEN_PIN` and
   `RELAY_CLOSE_PIN` in `coopdoor/config.py`, then restart.
 - **Relay clicks the opposite of expected (on when it should be off).**
@@ -193,7 +195,9 @@ sudo ./install.sh
 1. Installs `python3-flask` and `python3-rpi.gpio` from apt if they
    aren't already importable.
 2. Sets the timezone to `America/Chicago` (from `config.py`) and makes
-   sure NTP is on. Checks that the Pi takes its IP from DHCP. If
+   sure NTP is on. Points the Pi's time service at the router first,
+   then the internet, and checks that the router answers (see
+   [Time from the router](#time-from-the-router)). Checks that the Pi takes its IP from DHCP. If
    `/etc/dhcpcd.conf` sets a static address, it prints the lines to
    remove but doesn't change them itself, because that would drop your
    SSH session mid-install. Set the reservation on the router first,
@@ -216,7 +220,7 @@ On any machine with Python 3 and Flask:
 
 ```
 python3 -m coopdoor --fake-gpio --port 8080      # then open http://localhost:8080
-python3 -m unittest discover -s tests -t .      # 47 tests, no hardware needed
+python3 -m unittest discover -s tests -t .      # 51 tests, no hardware needed
 ```
 
 `--fake-gpio` logs relay changes instead of touching pins, and treats
@@ -235,7 +239,8 @@ coopdoor/
   door.py                   Timed relay moves (DoorController)
   suntimes.py               Sunrise/sunset (NOAA algorithm)
   settings.py               Persisted settings (JSON, atomic saves)
-  clock.py                  "Has NTP synced since boot?"
+  clock.py                  "Has NTP synced since boot?" + current time source
+  ntpcheck.py               "Will this server give the Pi its time?" checker
   controller.py             Interlock, scheduler, status
   web.py                    Flask routes
   __main__.py               Entry point (python3 -m coopdoor)
@@ -335,6 +340,63 @@ The remaining gap is a real power outage while the internet is also
 down. The Pi then has no way to know the time until it can reach an
 NTP server.
 
+#### Time from the router
+
+The Pi asks the **router** for the time first and the internet pool
+servers second. The order comes from `NTP_SERVERS` in `config.py`, and
+`install.sh` writes it to
+`/etc/systemd/timesyncd.conf.d/coopdoor.conf`. `"gateway"` in that list
+means the Pi's default router, looked up at install time; re-run
+`install.sh` if the router's address changes.
+
+**What this covers.** A Pi that's already running doesn't need a time
+server at all. Once synced, it keeps time on its own and the scheduler
+keeps running through any outage. A time server is only needed after
+the Pi restarts, from a power blip or a watchdog reboot. With the router
+as the source, the Pi can set its clock after a restart even when the
+internet is down, as long as the router stayed up.
+
+**What it doesn't cover.** The EdgeRouter X has no battery clock either.
+If the power goes out at the house and the internet is also down when
+it comes back, the router doesn't know the time. It reports itself as
+unsynchronized, and the Pi correctly refuses to trust it. Until the
+internet is back the scheduler waits, and the manual buttons still
+work. Two ways to close that gap:
+- Put the Synology's IP first in `NTP_SERVERS` and turn on its time
+  server (DSM: Control Panel → Regional Options → Time → NTP service).
+  The NAS has a battery clock, so it knows the time after a power cut.
+  Whether it reports itself as synced with no internet is something to
+  test with the check below.
+- Add a battery clock (RTC) module to the Pi itself. That's the only
+  option that doesn't depend on anything else being up.
+
+**Checking it.** `install.sh` runs this automatically. To run it by
+hand:
+
+```
+cd ~/git/pi_door
+python3 -m coopdoor.ntpcheck          # the router
+python3 -m coopdoor.ntpcheck 192.168.x.x   # any other server
+```
+
+It sends one time request and applies the Pi's own acceptance rules:
+the server answers, isn't flagged unsynchronized, has a stratum of
+1-15, and has a root distance under 5 s. The result is "Usable", "NOT
+usable" with the reason, or "NO ANSWER".
+
+- **NO ANSWER** usually means a firewall rule. If the coop network has
+  a LOCAL firewall ruleset on the EdgeRouter that only allows DNS and
+  DHCP to the router, add a rule accepting **UDP port 123** to the
+  router. EdgeOS normally answers time requests without any other
+  setup.
+- **Testing the outage case**: unplug the router's WAN (internet)
+  cable for 15-30 minutes and run the check again. If it still says
+  "Usable", the Pi can set its clock from the router through an
+  internet outage. If it says "NOT usable" (unsynchronized), this
+  router stops vouching for its own time once it loses its upstream.
+  The Pi would then fall back to waiting for the internet after a
+  restart, and the Synology or an RTC module is the answer.
+
 #### Sunrise/sunset
 
 `suntimes.py` implements NOAA's solar calculator: the same algorithm
@@ -372,7 +434,7 @@ Identical to the NodeMCU's:
 | `/save`   | POST   | Save settings (400 + reason if a value is invalid) |
 | `/jog`    | POST   | Fine-tune nudge: `dir=up\|down`, `ms=50..5000` (new; 409 if moving) |
 
-`/status` gained `clockSynced`, `jogNetMs`, and `version` (which
+`/status` gained `clockSynced`, `timeSource`, `jogNetMs`, and `version` (which
 replaces `firmwareBuilt`). The only other behavior change is that `/save` is now
 all-or-nothing and reports what it rejected. The ESP silently ignored
 bad fields.

@@ -125,6 +125,26 @@ class ClockWatcher:
         log.warning("Ignoring stale reboot marker (age %.0fs, uptime %.0fs)", age, uptime)
         return False
 
+    def time_source(self):
+        """Address of the NTP server the Pi is currently using (e.g. the
+        router's IP), or "" if unknown. Cached for a minute - the page
+        polls every 5 s and this runs a subprocess."""
+        now = time.monotonic()
+        cached = getattr(self, "_src_cache", None)
+        if cached and now - cached[0] < 60:
+            return cached[1]
+        src = ""
+        try:
+            out = subprocess.run(
+                ["timedatectl", "show-timesync", "-p", "ServerAddress", "--value"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+            src = out.splitlines()[0] if out else ""
+        except (OSError, subprocess.SubprocessError):
+            pass
+        self._src_cache = (now, src)
+        return src
+
     @staticmethod
     def _check_os():
         if os.path.exists(_TIMESYNC_FLAG):

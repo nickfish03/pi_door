@@ -307,7 +307,8 @@ document.querySelectorAll('input').forEach(function(el) {
 
 function refreshStatus() {
   fetch('/status').then(function(r) { return r.json(); }).then(function(d) {
-    document.getElementById('clock').textContent = 'Pi time: ' + d.time;
+    document.getElementById('clock').textContent = 'Pi time: ' + d.time +
+      (d.timeSource ? ' (time from ' + d.timeSource + ')' : '');
     document.getElementById('clockWarn').style.display = d.clockSynced ? 'none' : 'block';
     document.getElementById('doorState').textContent = d.doorState;
     document.getElementById('doorState').className = 'badge' + (d.doorState !== 'idle' ? ' moving' : '');

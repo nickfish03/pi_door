@@ -31,6 +31,17 @@ Location hardcoded to Rhinelander, WI.
 - **GitHub:** `nickfish03/pi_door` (Nick creates/pushes it; branch is
   `master`, as created locally). Check `git remote -v` and `git log`
   when picking this up.
+- **Time:** the Pi's systemd-timesyncd uses the EdgeRouter X (default
+  gateway) first, then internet pool servers (`NTP_SERVERS` in
+  `config.py` → `install.sh` →
+  `/etc/systemd/timesyncd.conf.d/coopdoor.conf`). Nick wants the
+  schedule to keep running through internet outages. Router NTP only
+  helps after a Pi restart while the router stayed up; a house power
+  cut plus an internet outage still leaves no trusted time (the ER-X
+  has no RTC). The fixes for that are the Synology's NTP or an RTC
+  module. `python3 -m coopdoor.ntpcheck [host]` checks a server with
+  timesyncd's acceptance rules. UDP 123 can't be tested from the cloud
+  sandbox (blocked); `tests/test_ntpcheck.py` uses a fake server.
 - **Pi network:** IP comes from DHCP, with Nick's reservation on the
   router. Nothing in the repo sets or assumes an IP. `install.sh`
   only warns about a static address in `/etc/dhcpcd.conf`; it never
