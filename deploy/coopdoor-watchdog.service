@@ -1,0 +1,10 @@
+# One run of the WiFi watchdog. Started every minute by
+# coopdoor-watchdog.timer - not enabled on its own. Installed by
+# install.sh, which fills in @REPO@.
+
+[Unit]
+Description=Coop door WiFi watchdog (one check)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash @REPO@/deploy/net-watchdog.sh

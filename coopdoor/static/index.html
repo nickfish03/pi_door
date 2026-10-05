@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<!-- Single-page UI, ported unchanged in look and behavior from the NodeMCU
+     version's include/WebPage.h. No external CSS/JS/fonts, so it works fully
+     offline on the local network. Polls /status every 5 s; posts to /open,
+     /close, /stop, /save. Any new /status field needs a matching d.<field>
+     read here (and vice versa) - nothing type-checks the two against each
+     other. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coop Door</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f4f4f1;
+    --card: #ffffff;
+    --text: #222;
+    --muted: #666;
+    --accent: #3a7d44;
+    --accent-dark: #2c5f34;
+    --border: #ddd;
+    --warn: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a;
+      --card: #232426;
+      --text: #eee;
+      --muted: #999;
+      --border: #3a3b3d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 16px;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  h2 { font-size: 1rem; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 14px;
+    max-width: 480px;
+  }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .row + .row { margin-top: 10px; }
+  label { font-size: 0.85rem; color: var(--muted); display: block; margin-bottom: 3px; }
+  input[type=number], input[type=time] {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 1rem;
+  }
+  .field { flex: 1; min-width: 110px; }
+  button {
+    padding: 10px 18px;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .btn-open { background: var(--accent); color: white; }
+  .btn-open:active { background: var(--accent-dark); }
+  .btn-close { background: #a33; color: white; }
+  .btn-close:active { background: #822; }
+  .btn-stop { background: var(--warn); color: white; }
+  .btn-stop:active { background: #8a3d06; }
+  .btn-save { background: #2563eb; color: white; margin-top: 12px; }
+  .btn-save:active { background: #1e4fbf; }
+  .status-line { font-size: 0.9rem; color: var(--muted); margin: 2px 0; }
+  .badge {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    background: var(--accent);
+    color: white;
+  }
+  .badge.moving { background: var(--warn); }
+  .badge.off { background: #777; }
+  .mode-toggle { display: flex; gap: 16px; margin-bottom: 12px; }
+  .mode-toggle label { display: flex; align-items: center; gap: 6px; font-size: 0.95rem; color: var(--text); cursor: pointer; }
+  .sched-onoff { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .sun-info { font-size: 0.85rem; color: var(--muted); margin-top: 6px; }
+  .footer { font-size: 0.75rem; color: var(--muted); margin-top: 18px; opacity: 0.7; }
+  fieldset { border: none; padding: 0; margin: 0; }
+  fieldset[disabled] { opacity: 0.45; }
+  .warn-line { color: var(--warn); font-weight: 600; }
+  .err-msg { color: #c33; font-size: 0.85rem; margin-top: 8px; display: none; }
+  .saved-msg { color: var(--accent); font-size: 0.85rem; margin-top: 8px; display: none; }
+</style>
+</head>
+<body>
+
+<h1>Coop Door</h1>
+<div class="status-line" id="clock">Loading...</div>
+<div class="status-line warn-line" id="clockWarn" style="display:none">Clock not synced from the internet yet - the scheduler is paused until it is. Manual buttons still work.</div>
+<div class="status-line">Door: <span class="badge" id="doorState">-</span></div>
+<div class="status-line">Last action: <span id="lastAction">-</span></div>
+
+<div class="card">
+  <h2>Manual Control</h2>
+  <div class="row">
+    <button class="btn-open" onclick="triggerDoor('open')">Open Now</button>
+    <button class="btn-close" onclick="triggerDoor('close')">Close Now</button>
+    <button class="btn-stop" onclick="stopDoor()">Stop</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Move Durations</h2>
+  <div class="row">
+    <div class="field">
+      <label for="openDur">Open duration (ms)</label>
+      <input type="number" id="openDur" min="50" max="300000" step="50">
+    </div>
+    <div class="field">
+      <label for="closeDur">Close duration (ms)</label>
+      <input type="number" id="closeDur" min="50" max="300000" step="50">
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Schedule &nbsp;<span class="badge" id="modeBadge">-</span></h2>
+
+  <div class="sched-onoff mode-toggle">
+    <label><input type="radio" name="schedulerEnabled" value="on" onchange="onSchedulerChange()"> Scheduler ON</label>
+    <label><input type="radio" name="schedulerEnabled" value="off" onchange="onSchedulerChange()"> Scheduler OFF (manual only)</label>
+  </div>
+
+  <fieldset id="schedFields">
+    <div class="mode-toggle">
+      <label><input type="radio" name="mode" value="manual" onchange="onModeChange()"> Manual times</label>
+      <label><input type="radio" name="mode" value="sun" onchange="onModeChange()"> Sunrise/Sunset</label>
+    </div>
+
+    <fieldset id="manualFields">
+      <div class="row">
+        <div class="field">
+          <label for="manOpen">Open at</label>
+          <input type="time" id="manOpen">
+        </div>
+        <div class="field">
+          <label for="manClose">Close at</label>
+          <input type="time" id="manClose">
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset id="sunFields">
+      <div class="row">
+        <div class="field">
+          <label for="sunOpenOffset">Open offset from sunrise (min, +/-)</label>
+          <input type="number" id="sunOpenOffset" step="1">
+        </div>
+        <div class="field">
+          <label for="sunCloseOffset">Close offset from sunset (min, +/-)</label>
+          <input type="number" id="sunCloseOffset" step="1">
+        </div>
+      </div>
+      <div class="sun-info" id="sunInfo">Today's sunrise/sunset: --:-- / --:--</div>
+      <div class="sun-info" id="calcTimes">Today's calculated open/close: --:-- / --:--</div>
+    </fieldset>
+  </fieldset>
+
+  <button class="btn-save" onclick="saveSettings()">Save</button>
+  <div class="saved-msg" id="savedMsg">Saved.</div>
+  <div class="err-msg" id="errMsg"></div>
+</div>
+
+<script>
+function onSchedulerChange() {
+  var checked = document.querySelector('input[name=schedulerEnabled]:checked');
+  var on = checked && checked.value === 'on';
+  document.getElementById('schedFields').disabled = !on;
+}
+
+function onModeChange() {
+  var mode = document.querySelector('input[name=mode]:checked').value;
+  document.getElementById('manualFields').disabled = (mode !== 'manual');
+  document.getElementById('sunFields').disabled = (mode !== 'sun');
+}
+
+function pad(n) { return (n < 10 ? '0' : '') + n; }
+
+function triggerDoor(action, confirmed) {
+  var url = '/' + action + (confirmed ? '?confirm=1' : '');
+  fetch(url, { method: 'POST' }).then(function(r) {
+    if (r.status === 409) {
+      return r.json().then(function(d) {
+        if (window.confirm(d.message || 'Door already reports that state. Run it again anyway?')) {
+          triggerDoor(action, true);
+        }
+      });
+    }
+    refreshStatus();
+  }).catch(function(e) { console.log('trigger failed', e); });
+}
+
+function stopDoor() {
+  fetch('/stop', { method: 'POST' }).then(refreshStatus);
+}
+
+function saveSettings() {
+  var mode = document.querySelector('input[name=mode]:checked').value;
+  var schedChecked = document.querySelector('input[name=schedulerEnabled]:checked');
+  var body = new URLSearchParams({
+    openDur: document.getElementById('openDur').value,
+    closeDur: document.getElementById('closeDur').value,
+    schedulerEnabled: schedChecked ? schedChecked.value : 'off',
+    mode: mode,
+    manOpen: document.getElementById('manOpen').value,
+    manClose: document.getElementById('manClose').value,
+    sunOpenOffset: document.getElementById('sunOpenOffset').value,
+    sunCloseOffset: document.getElementById('sunCloseOffset').value
+  });
+  fetch('/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString()
+  }).then(function(r) {
+    var ok = document.getElementById('savedMsg');
+    var err = document.getElementById('errMsg');
+    if (r.ok) {
+      err.style.display = 'none';
+      ok.style.display = 'block';
+      setTimeout(function() { ok.style.display = 'none'; }, 2000);
+      refreshStatus();
+    } else {
+      r.text().then(function(t) {
+        ok.style.display = 'none';
+        err.textContent = t || ('Save failed (HTTP ' + r.status + ')');
+        err.style.display = 'block';
+      });
+    }
+  }).catch(function() {
+    var err = document.getElementById('errMsg');
+    err.textContent = 'Save failed - controller unreachable.';
+    err.style.display = 'block';
+  });
+}
+
+var formFocused = false;
+document.querySelectorAll('input').forEach(function(el) {
+  el.addEventListener('focus', function() { formFocused = true; });
+  el.addEventListener('blur', function() { formFocused = false; });
+});
+
+function refreshStatus() {
+  fetch('/status').then(function(r) { return r.json(); }).then(function(d) {
+    document.getElementById('clock').textContent = 'Pi time: ' + d.time;
+    document.getElementById('clockWarn').style.display = d.clockSynced ? 'none' : 'block';
+    document.getElementById('doorState').textContent = d.doorState;
+    document.getElementById('doorState').className = 'badge' + (d.doorState !== 'idle' ? ' moving' : '');
+
+    var laText = d.lastAction === 'unknown' ? 'none recorded yet' :
+      d.lastAction.toUpperCase() + (d.lastActionAt ? ' — ' + d.lastActionAt : '') +
+      (d.lastActionSource ? ' (' + d.lastActionSource + ')' : '');
+    document.getElementById('lastAction').textContent = laText;
+
+    document.getElementById('version').textContent = d.version;
+
+    if (!d.schedulerEnabled) {
+      document.getElementById('modeBadge').textContent = 'Scheduler OFF';
+      document.getElementById('modeBadge').className = 'badge off';
+    } else {
+      document.getElementById('modeBadge').textContent = d.mode === 'sun' ? 'Sunrise/Sunset mode' : 'Manual mode';
+      document.getElementById('modeBadge').className = 'badge';
+    }
+
+    // Don't clobber fields the user is actively editing.
+    if (formFocused) return;
+
+    document.getElementById('openDur').value = d.openDurationMs;
+    document.getElementById('closeDur').value = d.closeDurationMs;
+    document.querySelector('input[name=schedulerEnabled][value=' + (d.schedulerEnabled ? 'on' : 'off') + ']').checked = true;
+    document.querySelector('input[name=mode][value=' + d.mode + ']').checked = true;
+    document.getElementById('manOpen').value = pad(d.manualOpenHour) + ':' + pad(d.manualOpenMin);
+    document.getElementById('manClose').value = pad(d.manualCloseHour) + ':' + pad(d.manualCloseMin);
+    document.getElementById('sunOpenOffset').value = d.sunOpenOffsetMin;
+    document.getElementById('sunCloseOffset').value = d.sunCloseOffsetMin;
+    document.getElementById('sunInfo').textContent =
+      "Today's sunrise/sunset: " + d.sunriseTime + ' / ' + d.sunsetTime;
+    document.getElementById('calcTimes').textContent =
+      "Today's calculated open/close: " + d.calcOpenTime + ' / ' + d.calcCloseTime;
+    onSchedulerChange();
+    onModeChange();
+  }).catch(function(e) { console.log('status fetch failed', e); });
+}
+
+refreshStatus();
+setInterval(refreshStatus, 5000);
+</script>
+<div class="footer">Software: <span id="version">-</span></div>
+
+</body>
+</html>

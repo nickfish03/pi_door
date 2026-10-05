@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+
+# Settings from by-hand test runs (python3 -m coopdoor without systemd).
+# The real settings live in /var/lib/coopdoor on the Pi, outside the repo.
+state/
+
+# Editor
+.vscode/
