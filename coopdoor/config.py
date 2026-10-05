@@ -72,9 +72,12 @@ TIMEZONE = "America/Chicago"
 # The internet pool servers are the backup for when the router doesn't
 # answer.
 #
-# To use a fixed address instead (e.g. the Synology, which has a battery
-# clock), replace "gateway" with its IP.
-NTP_SERVERS = ["gateway", "0.debian.pool.ntp.org", "1.debian.pool.ntp.org"]
+# First choice is the Synology NAS (192.168.1.5, static): it has a battery
+# clock, so it still knows the time after a power cut even if the internet
+# is down too - which the EdgeRouter X (no battery clock) can't. The
+# router is the backup, then the internet. Requires DSM's NTP service to
+# be on: Control Panel > Regional Options > NTP Service.
+NTP_SERVERS = ["192.168.1.5", "gateway", "0.debian.pool.ntp.org", "1.debian.pool.ntp.org"]
 
 # ---------------------------------------------------------------------------
 # Durations - sanity limits for what /save accepts

@@ -31,8 +31,9 @@ Location hardcoded to Rhinelander, WI.
 - **GitHub:** `nickfish03/pi_door` (Nick creates/pushes it; branch is
   `master`, as created locally). Check `git remote -v` and `git log`
   when picking this up.
-- **Time:** the Pi's systemd-timesyncd uses the EdgeRouter X (default
-  gateway) first, then internet pool servers (`NTP_SERVERS` in
+- **Time:** the Pi's systemd-timesyncd uses the Synology NAS
+  (192.168.1.5, static IP, DSM NTP service, no Synology firewall) first,
+  then the EdgeRouter X (default gateway), then internet pool servers (`NTP_SERVERS` in
   `config.py` → `install.sh` →
   `/etc/systemd/timesyncd.conf.d/coopdoor.conf`). Nick wants the
   schedule to keep running through internet outages. Router NTP only
