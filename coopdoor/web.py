@@ -10,6 +10,7 @@
 #   POST /close    close (same interlock)
 #   POST /stop     stop immediately
 #   POST /save     persist settings from the form
+#   POST /jog      fine tuning: dir=up|down, ms=N (new on the Pi)
 #
 # Written for Flask 1.1 (what Raspberry Pi OS Bullseye's apt package
 # ships) - so @app.route(..., methods=[...]), not the newer @app.post.
@@ -19,7 +20,7 @@ import os
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from .controller import ConfirmNeeded, SaveError
+from .controller import ConfirmNeeded, DoorBusy, SaveError
 from .settings import ACTION_CLOSED, ACTION_OPEN
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -70,6 +71,16 @@ def create_app(ctl):
             ctl.save_form(request.form)
         except SaveError as e:
             return "Not saved: %s" % e, 400, {"Content-Type": "text/plain"}
+        return "OK", 200, {"Content-Type": "text/plain"}
+
+    @app.route("/jog", methods=["POST"])
+    def jog():
+        try:
+            ctl.jog(request.values.get("dir", ""), request.values.get("ms", ""))
+        except SaveError as e:
+            return "Not moved: %s" % e, 400, {"Content-Type": "text/plain"}
+        except DoorBusy as e:
+            return str(e), 409, {"Content-Type": "text/plain"}
         return "OK", 200, {"Content-Type": "text/plain"}
 
     return app

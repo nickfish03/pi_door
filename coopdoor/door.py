@@ -48,6 +48,19 @@ class DoorController:
     def is_moving(self):
         return self._state != IDLE
 
+    @property
+    def move_id(self):
+        """Increments with every move started; lets callers tell which
+        move is the current one."""
+        return self._move_id
+
+    def remaining_ms(self):
+        """Milliseconds left in the current move (0 when idle)."""
+        with self._lock:
+            if not self.is_moving():
+                return 0
+            return max(0, int(round((self._deadline - time.monotonic()) * 1000)))
+
     # -- commands ---------------------------------------------------------
     def trigger_open(self, duration_ms):
         return self._start(OPENING, duration_ms)

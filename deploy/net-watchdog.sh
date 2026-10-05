@@ -17,6 +17,11 @@
 #                  more often than once per MIN_UPTIME_S of uptime (so a
 #                  dead router means one reboot every 30 min, not a loop)
 #
+# Before rebooting, if the clock is NTP-synced it leaves a marker so the
+# controller trusts the restored clock after the reboot even though there's
+# still no network to re-sync from (see coopdoor/clock.py). Otherwise the
+# scheduler would sit paused for the rest of the outage.
+#
 # Run once a minute as root by coopdoor-watchdog.timer. Logs to the journal:
 #   journalctl -t coopdoor-watchdog
 # ============================================================================
@@ -30,6 +35,7 @@ BOUNCE_AFTER=7
 REBOOT_AFTER=10
 MIN_UPTIME_S=1800
 STATUS_URL="http://127.0.0.1/status"
+CLOCK_MARKER=/var/lib/coopdoor/clock-trusted-reboot
 
 log() { logger -t coopdoor-watchdog "$*"; }
 
@@ -80,6 +86,13 @@ except Exception:
     if [ "$door" = "opening" ] || [ "$door" = "closing" ]; then
         log "Would reboot, but the door is $door - retrying next minute"
         exit 0
+    fi
+    # /run/coopdoor/clock-synced also counts: it's the controller's own
+    # latch, and covers a second watchdog reboot in the same long outage
+    # (each one costs the clock roughly a reboot's worth of drift).
+    if [ -e /run/systemd/timesync/synchronized ] || [ -e /run/coopdoor/clock-synced ] \
+       || [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = "yes" ]; then
+        date +%s > "$CLOCK_MARKER" && sync
     fi
     log "Rebooting to recover WiFi"
     systemctl reboot

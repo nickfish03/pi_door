@@ -63,6 +63,13 @@ TIMEZONE = "America/Chicago"
 MIN_DURATION_MS = 50
 MAX_DURATION_MS = 300000   # 5 min. Raise if your actuator genuinely needs longer.
 
+# Fine-tuning (Up/Down nudge) step limits. The page's box defaults to 500 ms.
+# The max is deliberately well below a full move: a nudge is for adjusting
+# the door's height, not for opening or closing it.
+JOG_DEFAULT_MS = 500
+JOG_MIN_MS = 50
+JOG_MAX_MS = 5000
+
 # Sun offsets are limited to +/- 12 hours; anything bigger isn't a sane
 # "minutes before/after sunrise" value.
 MAX_SUN_OFFSET_MIN = 720
@@ -88,6 +95,20 @@ STATE_DIR = os.environ.get(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "state"),
 )
 SETTINGS_FILE = os.path.join(STATE_DIR, "settings.json")
+
+# Written by deploy/net-watchdog.sh just before it reboots the Pi, when the
+# clock was NTP-synced at that moment. On the next boot clock.py accepts it
+# (once) as proof the restored time is good - see clock.py for why. The
+# watchdog has this path hardcoded as /var/lib/coopdoor/clock-trusted-reboot.
+CLOCK_REBOOT_MARKER = os.path.join(STATE_DIR, "clock-trusted-reboot")
+
+# "Clock has synced since this boot" flag, so a service restart mid-outage
+# doesn't forget it. Must be on a tmpfs that's cleared every boot: the
+# systemd unit sets /run/coopdoor (RuntimeDirectory=, preserved across
+# service restarts). Not set for by-hand runs, which then just don't keep
+# the flag across restarts.
+RUNTIME_DIR = os.environ.get("COOPDOOR_RUNTIME_DIR")
+CLOCK_SYNCED_FLAG = os.path.join(RUNTIME_DIR, "clock-synced") if RUNTIME_DIR else None
 
 # ---------------------------------------------------------------------------
 # Scheduler

@@ -69,7 +69,9 @@ def main(argv=None):
     ctl = CoopController(
         relays=make_relays(fake=args.fake_gpio),
         settings=settings,
-        clock=ClockWatcher(assume_synced=args.fake_gpio),
+        clock=ClockWatcher(assume_synced=args.fake_gpio,
+                           reboot_marker=config.CLOCK_REBOOT_MARKER,
+                           runtime_flag=config.CLOCK_SYNCED_FLAG),
         version=software_version(),
     )
 

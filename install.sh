@@ -53,6 +53,25 @@ fi
 # Make sure NTP is on - the scheduler waits for a synced clock.
 timedatectl set-ntp true || true
 
+# --- 2b. IP address: should come from DHCP ---------------------------------
+# The controller doesn't care what IP the Pi has; give it a fixed address
+# with a DHCP reservation on the router. A static address set on the Pi
+# itself (Bullseye: /etc/dhcpcd.conf) would override that, so warn about
+# one - but never edit network config from here: changing it mid-install
+# would cut off the SSH session running this script.
+if grep -Eq '^[[:space:]]*static[[:space:]]+ip_address' /etc/dhcpcd.conf 2>/dev/null; then
+    echo
+    echo "!!  /etc/dhcpcd.conf sets a static IP on this Pi:"
+    grep -En '^[[:space:]]*(interface|static)' /etc/dhcpcd.conf | sed 's/^/      /'
+    echo "    To use DHCP (with a reservation on your router) instead, comment out"
+    echo "    those 'interface'/'static' lines (sudo nano /etc/dhcpcd.conf), then"
+    echo "    sudo reboot. Do it AFTER setting up the router reservation, and expect"
+    echo "    your SSH session to drop - reconnect at the reserved address."
+    echo
+else
+    echo "==> IP comes from DHCP (no static address in /etc/dhcpcd.conf)"
+fi
+
 # --- 3. retire chicken_door -------------------------------------------------
 retire_crontab() {   # $1 = user whose crontab to clean
     local u="$1" current backup

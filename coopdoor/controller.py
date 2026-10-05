@@ -34,6 +34,15 @@ class SaveError(Exception):
     """Raised when /save gets a value it can't accept. Nothing is saved."""
 
 
+class DoorBusy(Exception):
+    """Raised when a fine-tuning nudge is requested while the door is
+    already moving."""
+
+
+JOG_UP = "up"
+JOG_DOWN = "down"
+
+
 class CoopController:
     def __init__(self, relays, settings, clock, now_fn=datetime.now, version="unknown"):
         self.settings = settings
@@ -51,6 +60,16 @@ class CoopController:
         # fires at most once a day. Same idea as lastOpenTriggerYday.
         self._last_open_day = None
         self._last_close_day = None
+
+        # Fine tuning (Up/Down nudges). Which door move is a nudge (so Stop
+        # can treat it differently), its direction (+1 up / -1 down), and the
+        # net nudging since the last full open/close, in ms (+ = up). That
+        # running total is shown on the page as a tuning aid: if you always
+        # nudge +1500 ms up after an Open, the Open duration is 1500 ms short.
+        # RAM only - it's a hint, not state worth persisting.
+        self._jog_move_id = None
+        self._jog_sign = 0
+        self._jog_net_ms = 0
 
         self._stop_event = threading.Event()
         self._thread = None
@@ -86,6 +105,7 @@ class CoopController:
         signal, and the interlock must hold for the whole window."""
         s = self.settings
         s["lastAction"] = action
+        self._jog_net_ms = 0  # a full move (or an aborted one) starts a new tuning tally
         if self.clock.is_synced():
             s["lastActionAt"] = self._now().strftime("%Y-%m-%d %H:%M")
         else:
@@ -122,10 +142,52 @@ class CoopController:
 
     def manual_stop(self):
         with self._lock:
+            if self.door.is_moving() and self.door.move_id == self._jog_move_id:
+                # Stopping a nudge: it was only ever a small adjustment, so
+                # the open/closed record still stands. Take the part that
+                # didn't run back off the tuning tally.
+                self._jog_net_ms -= self._jog_sign * self.door.remaining_ms()
+                self.door.stop()
+                log.info("Fine-tune nudge stopped early")
+                return
             if self.door.stop():
                 # Stopped mid-travel: the door could be anywhere, so the
                 # interlock can no longer claim to know its position.
                 self._record_action(ACTION_UNKNOWN, "manual (stopped mid-move)")
+
+    def jog(self, direction, ms):
+        """Fine tuning: run the motor up (open relay) or down (close relay)
+        for a short time, to adjust the door's height.
+
+        Deliberately NOT subject to the confirm-before-repeat interlock, and
+        doesn't change lastAction: nudging an open door up a little is the
+        whole point, and afterwards the door is still "open" for the
+        scheduler's purposes. The size limit (config.JOG_MAX_MS) is what
+        keeps this from being used as a full move. Refused while the door is
+        already moving, so a nudge can never replace or reverse a full move
+        partway through."""
+        if direction not in (JOG_UP, JOG_DOWN):
+            raise SaveError("direction must be 'up' or 'down'")
+        try:
+            ms = int(str(ms).strip())
+        except ValueError:
+            raise SaveError("step must be a whole number of ms")
+        if not config.JOG_MIN_MS <= ms <= config.JOG_MAX_MS:
+            raise SaveError("step must be %d-%d ms" % (config.JOG_MIN_MS, config.JOG_MAX_MS))
+
+        with self._lock:
+            if self.door.is_moving():
+                raise DoorBusy("Door is already moving - wait for it to finish, or press Stop first.")
+            if direction == JOG_UP:
+                self.door.trigger_open(ms)
+                self._jog_sign = 1
+            else:
+                self.door.trigger_close(ms)
+                self._jog_sign = -1
+            self._jog_move_id = self.door.move_id
+            self._jog_net_ms += self._jog_sign * ms
+            log.info("Fine-tune nudge %s %d ms (net since last full move: %+d ms)",
+                     direction, ms, self._jog_net_ms)
 
     def save_form(self, form):
         """Apply /save form fields (same names the NodeMCU page posts).
@@ -296,5 +358,6 @@ class CoopController:
                 "sunsetTime": format_minutes(sunset),
                 "calcOpenTime": format_minutes(open_t),
                 "calcCloseTime": format_minutes(close_t),
+                "jogNetMs": self._jog_net_ms,
                 "version": self.version,
             }

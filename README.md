@@ -67,6 +67,21 @@ chicken_door program's `motion = 10` for this hardware.
   loss. If a value is out of range, nothing is saved and the page says
   what was wrong.
 
+**Fine Tuning** (bottom of the page)
+- **Step (ms)**: how long one nudge runs the motor. Defaults to 500 ms
+  each time the page loads; 50 to 5000 ms allowed.
+- **▲ Up / ▼ Down**: run the motor up (the Open relay) or down (the
+  Close relay) for one step, to adjust the door's height. **Stop**
+  works here too.
+- Nudges don't change the "last action" record, so they never trigger
+  the confirm dialog and don't affect the scheduler. A door that was
+  open is still "open" after a nudge.
+- A nudge is refused while the door is already moving, so it can't
+  interrupt a full open or close.
+- **Net fine-tuning since last full open/close** totals your nudges
+  (+ = up). It resets at every full move. Use it to tune the durations;
+  see below.
+
 ### Tuning your durations
 
 There's no feedback, so you have to measure how long the motor takes to
@@ -75,6 +90,12 @@ fully open and fully close the door, then add a safety margin
 of travel, but not so much that the motor strains against a hard stop.
 Time it with Open Now / Close Now and Stop, then set the duration and
 Save.
+
+Fine Tuning makes this easier. After a full Open, nudge the door up or
+down until it sits where you want it, then read the net total. If it
+says +1500 ms (up), the Open duration is about 1500 ms short. Add that
+and Save. Do the same after a Close for the Close duration. The DC motor
+runs slower in the cold, so expect to retune between seasons.
 
 ### The safety interlock (confirm-before-repeat)
 
@@ -120,8 +141,8 @@ cat /var/lib/coopdoor/settings.json     # saved settings, human-readable
 
 - **`.local` name doesn't resolve.** mDNS doesn't cross VLAN boundaries,
   and some Windows setups don't resolve `.local` at all. Use the Pi's
-  IP (`hostname -I` on the Pi) and give it a DHCP reservation on the
-  router.
+  IP (`hostname -I` on the Pi). The Pi gets its address by DHCP, so a
+  DHCP reservation on the router keeps it fixed.
 - **"Clock not synced" warning won't go away.** The Pi has no battery
   clock and needs to reach an NTP server once after each boot. Check
   `timedatectl` on the Pi (it should say `System clock synchronized:
@@ -172,7 +193,11 @@ sudo ./install.sh
 1. Installs `python3-flask` and `python3-rpi.gpio` from apt if they
    aren't already importable.
 2. Sets the timezone to `America/Chicago` (from `config.py`) and makes
-   sure NTP is on.
+   sure NTP is on. Checks that the Pi takes its IP from DHCP. If
+   `/etc/dhcpcd.conf` sets a static address, it prints the lines to
+   remove but doesn't change them itself, because that would drop your
+   SSH session mid-install. Set the reservation on the router first,
+   then remove the static lines and reboot.
 3. Retires chicken_door. It stops the running program and comments out
    its `@reboot` line and the old `ping 8.8.8.8 || reboot` line in your
    and root's crontabs. A backup is saved in your home directory first.
@@ -191,7 +216,7 @@ On any machine with Python 3 and Flask:
 
 ```
 python3 -m coopdoor --fake-gpio --port 8080      # then open http://localhost:8080
-python3 -m unittest discover -s tests -t .      # 33 tests, no hardware needed
+python3 -m unittest discover -s tests -t .      # 47 tests, no hardware needed
 ```
 
 `--fake-gpio` logs relay changes instead of touching pins, and treats
@@ -289,9 +314,26 @@ stale after a power outage. So `clock.py` asks the OS whether NTP has
 actually synced since this boot, using systemd-timesyncd's
 `/run/systemd/timesync/synchronized` flag with `timedatectl` as a
 fallback. Until it has, the scheduler doesn't act and the UI shows a
-warning. Once synced, the result is latched for the life of the
-process. The Pi then keeps good time through a WiFi outage, so the
-scheduler keeps working, just as the ESP did.
+warning. Once synced, the result is latched for the rest of the boot,
+in `/run/coopdoor`, so a service restart doesn't lose it either. The Pi
+then keeps good time through a WiFi outage, so the scheduler keeps
+working, just as the ESP did.
+
+One case needs extra help: when the WiFi watchdog reboots the Pi, the
+outage is still going, so there's no NTP to re-sync from. If the clock
+was synced, the watchdog writes a timestamp to
+`/var/lib/coopdoor/clock-trusted-reboot` just before rebooting. A clean
+reboot saves and restores the time, so it's off by about the length of
+the reboot. On the next start, `clock.py` trusts that restored clock
+if the marker is under 15 minutes old and the Pi booted under 15
+minutes ago. It deletes the marker either way, so the marker can't
+vouch for a clock restored after an unplanned power cut. Without this,
+a watchdog reboot would pause the scheduler for the rest of the
+outage.
+
+The remaining gap is a real power outage while the internet is also
+down. The Pi then has no way to know the time until it can reach an
+NTP server.
 
 #### Sunrise/sunset
 
@@ -328,9 +370,10 @@ Identical to the NodeMCU's:
 | `/close`  | POST   | Close (same interlock)                             |
 | `/stop`   | POST   | Stop immediately                                   |
 | `/save`   | POST   | Save settings (400 + reason if a value is invalid) |
+| `/jog`    | POST   | Fine-tune nudge: `dir=up\|down`, `ms=50..5000` (new; 409 if moving) |
 
-`/status` gained `clockSynced` and `version` (which replaces
-`firmwareBuilt`). The only other behavior change is that `/save` is now
+`/status` gained `clockSynced`, `jogNetMs`, and `version` (which
+replaces `firmwareBuilt`). The only other behavior change is that `/save` is now
 all-or-nothing and reports what it rejected. The ESP silently ignored
 bad fields.
 
@@ -350,7 +393,9 @@ with WiFi fine, and could reboot mid-move. The new watchdog:
 - after 5 failed minutes in a row, asks wpa_supplicant to reconnect;
   after 7, bounces `wlan0`; after 10, reboots;
 - never reboots while the door is moving, and never more than once
-  per 30 minutes of uptime, so a dead router can't cause a reboot loop.
+  per 30 minutes of uptime, so a dead router can't cause a reboot loop;
+- leaves a trusted-clock marker before rebooting (see
+  [Clock sync](#clock-sync)).
 
 ### Extending this project
 

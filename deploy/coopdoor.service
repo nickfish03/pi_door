@@ -18,6 +18,7 @@ SupplementaryGroups=gpio
 WorkingDirectory=@REPO@
 Environment=PYTHONUNBUFFERED=1
 Environment=COOPDOOR_STATE_DIR=/var/lib/coopdoor
+Environment=COOPDOOR_RUNTIME_DIR=/run/coopdoor
 
 # Relays off before starting, and again after stopping for ANY reason -
 # including a crash or kill, where the program's own cleanup never runs.
@@ -32,6 +33,10 @@ RestartSec=5
 # Settings live in /var/lib/coopdoor/settings.json, created and owned for
 # @USER@ by systemd.
 StateDirectory=coopdoor
+# /run/coopdoor: tmpfs, so cleared every boot - holds the "clock has synced
+# since this boot" flag (see clock.py). Preserved across service restarts.
+RuntimeDirectory=coopdoor
+RuntimeDirectoryPreserve=yes
 
 # Port 80 without running as root: grant only the one capability needed.
 AmbientCapabilities=CAP_NET_BIND_SERVICE

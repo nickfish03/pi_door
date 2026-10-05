@@ -31,6 +31,11 @@ Location hardcoded to Rhinelander, WI.
 - **GitHub:** `nickfish03/pi_door` (Nick creates/pushes it; branch is
   `master`, as created locally). Check `git remote -v` and `git log`
   when picking this up.
+- **Pi network:** IP comes from DHCP, with Nick's reservation on the
+  router. Nothing in the repo sets or assumes an IP. `install.sh`
+  only warns about a static address in `/etc/dhcpcd.conf`; it never
+  edits network config, since that would kill the SSH session running
+  it.
 - **On the Pi:** cloned to `~/git/pi_door` (by convention, matching the
   old `/home/pi/git/chicken_door`), running as `coopdoor.service`.
   Nick reaches the Pi over SSH; Claude does not, so anything on the Pi
@@ -78,8 +83,19 @@ Compatibility constraints, since apt's versions on Bullseye are old:
   schedule matching.
 - The scheduler must not act until `clock.py` says NTP synced since
   boot. fake-hwclock makes a stale boot time look plausible. The
-  synced state is latched, so a long WiFi outage doesn't stop the
-  scheduler.
+  synced state is latched, in `/run/coopdoor/clock-synced` (tmpfs,
+  survives service restarts but not reboots), so a long WiFi outage
+  doesn't stop the scheduler. The one exception to "NTP since boot" is
+  the watchdog's single-use reboot marker
+  (`/var/lib/coopdoor/clock-trusted-reboot`, honored only if it's
+  under 15 min old and uptime is under 15 min). Don't loosen those
+  checks: a stale marker would vouch for a clock restored after a
+  power cut.
+- Fine tuning (`/jog`) bypasses the interlock and never changes
+  `lastAction`, which is intentional. It's capped at `JOG_MAX_MS` and
+  refused while the door is moving. Stop during a nudge must not reset
+  `lastAction` to unknown (the controller tracks the nudge's
+  `door.move_id`).
 - The 0.25 s reverse dead-time (`RELAY_REVERSE_DEADTIME_S`) is
   intentional; the NodeMCU didn't have it.
 - `net-watchdog.sh` must never reboot mid-move or more than once per
